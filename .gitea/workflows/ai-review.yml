@@ -33,7 +33,7 @@ jobs:
   review:
     # Comments that are not a /review command on a pull request never start a runner job.
     # The shared workflow also checks that the commenter has write access.
-    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && startsWith(github.event.comment.body, '/review'))
+    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review ')))
     permissions:
       contents: read
       issues: write
