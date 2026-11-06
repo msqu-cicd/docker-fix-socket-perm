@@ -3,11 +3,11 @@ description: 'fix docker host socket permissions'
 
 inputs:
   socket-path:
-    required: true
+    required: false
     description: "location of the docker socket"
     default: '/var/run/docker.sock'
   workaround-group:
-    required: true
+    required: false
     description: "name of the workaround group to be created (if necessary)"
     default: 'hostdocker'
 
@@ -22,33 +22,54 @@ runs:
         SOCKET_PATH: ${{ inputs.socket-path }}
         WORKAROUND_GROUP: ${{ inputs.workaround-group }}
       run: |
-        SOCK_OWNER_GID=$(stat -c %g $SOCKET_PATH)
+        if [[ ! -S "$SOCKET_PATH" ]]; then
+            echo "Error: $SOCKET_PATH does not exist or is not a socket"
+            exit 1
+        fi
+
+        SOCK_OWNER_GID=$(stat -c %g "$SOCKET_PATH")
         echo "$SOCKET_PATH is owned by gid=$SOCK_OWNER_GID"
 
         RUNNING_AS_USER=$(whoami)
         echo "running as user: $RUNNING_AS_USER"
 
+        if [[ -r "$SOCKET_PATH" && -w "$SOCKET_PATH" ]]; then
+            echo "$SOCKET_PATH is already readable and writable, nothing to do"
+            exit 0
+        fi
+
         SUDO_PREFIX=""
         if [[ "$RUNNING_AS_USER" != "root" ]]; then
-            echo "current user is not sudo, assuming sudo is required"
-            SUDO_PREFIX="sudo"
+            echo "current user is not root, assuming sudo is required"
+            if ! command -v sudo >/dev/null 2>&1; then
+                echo "Error: not running as root and sudo is not installed"
+                exit 1
+            fi
+            SUDO_PREFIX="sudo -n"
         fi
 
-        if getent group $SOCK_OWNER_GID | grep -q "$RUNNING_AS_USER"; then
-            echo "User is already a member of $SOCK_OWNER_GID"
+        if id -G "$RUNNING_AS_USER" | tr ' ' '\n' | grep -qx "$SOCK_OWNER_GID"; then
+            echo "User is already a member of gid=$SOCK_OWNER_GID"
             exit 0
         fi
 
-        if grep -q -E ":$SOCK_OWNER_GID:" /etc/group; then
-            echo "Group for gid=$SOCK_OWNER_GID already exists, adding user to it"
-            $SUDO_PREFIX usermod -aG $(getent group $SOCK_OWNER_GID | cut -d: -f1) $RUNNING_AS_USER
+        if getent group "$SOCK_OWNER_GID" > /dev/null; then
+            EXISTING_GROUP=$(getent group "$SOCK_OWNER_GID" | cut -d: -f1)
+            echo "Group $EXISTING_GROUP already exists for gid=$SOCK_OWNER_GID, adding user to it"
+            $SUDO_PREFIX usermod -aG "$EXISTING_GROUP" "$RUNNING_AS_USER"
             exit 0
+        fi
+
+        if getent group "$WORKAROUND_GROUP" > /dev/null; then
+            EXISTING_GID=$(getent group "$WORKAROUND_GROUP" | cut -d: -f3)
+            echo "Error: group $WORKAROUND_GROUP already exists with gid=$EXISTING_GID, expected gid=$SOCK_OWNER_GID"
+            exit 1
         fi
 
         echo "Group for gid=$SOCK_OWNER_GID does not exist, creating workaround group: $WORKAROUND_GROUP"
-        $SUDO_PREFIX groupadd -g $SOCK_OWNER_GID $WORKAROUND_GROUP
+        $SUDO_PREFIX groupadd -g "$SOCK_OWNER_GID" "$WORKAROUND_GROUP"
         echo "Group for gid=$SOCK_OWNER_GID created"
 
         echo "Adding user to workaround group: $WORKAROUND_GROUP"
-        $SUDO_PREFIX usermod -aG $WORKAROUND_GROUP $RUNNING_AS_USER
+        $SUDO_PREFIX usermod -aG "$WORKAROUND_GROUP" "$RUNNING_AS_USER"
         echo "Added user to workaround group"
