@@ -25,5 +25,6 @@ jobs:
         with:
           allow_multiple_documents: "true"
           # Drone configs reuse anchors across documents, which Drone accepts
-          # but a standard YAML parser does not.
+          # but a standard YAML parser does not. This repo has no Drone config;
+          # the exclusion is kept so this workflow stays identical across repos.
           yaml_exclude_regex: '(^|/)\.drone\.yml$'
